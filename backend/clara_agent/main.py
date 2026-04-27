@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from google.adk.agents import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig
 from google.adk.runners import Runner
@@ -19,6 +20,10 @@ from google.genai import types
 from pydantic import BaseModel
 from pydantic import ValidationError
 
+from clara_agent.api import router as api_router
+from clara_agent.api import IMAGE_DUMP_DIR
+from clara_agent.api import IMAGES_DIR
+from clara_agent.db import initialize_database
 from clara_agent.monkey_patch import patch_gemini_3_1_support
 
 patch_gemini_3_1_support()
@@ -79,6 +84,7 @@ ClientMessage = (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global runner
+    initialize_database()
     runner = Runner(
         agent=clara_agent,
         app_name=APP_NAME,
@@ -88,6 +94,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Clara API", lifespan=lifespan)
+app.include_router(api_router)
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+IMAGE_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media/images", StaticFiles(directory=IMAGES_DIR), name="images")
+app.mount(
+    "/media/image-dump",
+    StaticFiles(directory=IMAGE_DUMP_DIR),
+    name="image-dump",
+)
 
 app.add_middleware(
     CORSMiddleware,

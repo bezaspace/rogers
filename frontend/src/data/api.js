@@ -1,0 +1,161 @@
+const API_BASE_URL =
+  import.meta.env.VITE_BACKEND_HTTP_URL ||
+  import.meta.env.VITE_API_URL ||
+  ''
+
+async function request(path, options = {}) {
+  const bodyIsFormData = options.body instanceof FormData
+  const response = await fetch(`${API_BASE_URL}/api${path}`, {
+    headers: bodyIsFormData
+      ? options.headers || {}
+      : {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+    ...options,
+  })
+
+  if (!response.ok) {
+    throw new Error(`API request failed: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export function getProjects() {
+  return request('/projects')
+}
+
+export function createProject(name, details) {
+  return request('/projects', {
+    method: 'POST',
+    body: JSON.stringify({ name, details }),
+  })
+}
+
+export function deleteProject(projectId) {
+  return request(`/projects/${projectId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function createFile(projectId, name, content) {
+  return request(`/projects/${projectId}/files`, {
+    method: 'POST',
+    body: JSON.stringify({ name, content }),
+  })
+}
+
+export function updateFile(fileId, updates) {
+  return request(`/files/${fileId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
+export function deleteFile(fileId) {
+  return request(`/files/${fileId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function getImages() {
+  return request('/images')
+}
+
+export function deleteImage(imageId) {
+  return request(`/images/${imageId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function resolveAssetUrl(url) {
+  if (!url || !url.startsWith('/')) {
+    return url
+  }
+
+  return `${API_BASE_URL}${url}`
+}
+
+export function uploadImage(file, category, metadata) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('category', category || 'USER_UPLOAD')
+  formData.append('metadata', metadata || '')
+
+  return request('/images', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+  })
+}
+
+export function getImageDump() {
+  return request('/image-dump')
+}
+
+export function deleteImageDumpItem(itemId) {
+  return request(`/image-dump/${itemId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function uploadImageDumpItem(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return request('/image-dump', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+  })
+}
+
+export function getMindDump() {
+  return request('/mind-dump')
+}
+
+export function createMindDumpEntry(content) {
+  return request('/mind-dump', {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  })
+}
+
+export function updateMindDumpEntry(entryId, updates) {
+  return request(`/mind-dump/${entryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
+export function deleteMindDumpEntry(entryId) {
+  return request(`/mind-dump/${entryId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function getTasks() {
+  return request('/tasks')
+}
+
+export function createTask(task) {
+  return request('/tasks', {
+    method: 'POST',
+    body: JSON.stringify(task),
+  })
+}
+
+export function updateTask(taskId, updates) {
+  return request(`/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
+export function rescheduleTask(taskId, payload) {
+  return request(`/tasks/${taskId}/reschedule`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

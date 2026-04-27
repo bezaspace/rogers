@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import {
   DndContext,
   closestCorners,
@@ -10,8 +10,8 @@ import {
   useDraggable
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { mockTasks } from '../data/mockData';
-import { Clock, Tag } from 'lucide-react';
+import { getTasks, rescheduleTask } from '../data/api';
+import { X } from 'lucide-react';
 
 const HOURS = Array.from({ length: 24 * 2 }, (_, i) => {
   const h = Math.floor(i / 2);
@@ -22,11 +22,30 @@ const HOURS = Array.from({ length: 24 * 2 }, (_, i) => {
 const DAYS = ['2026-04-27', '2026-04-28', '2026-04-29'];
 
 export default function TimelineView() {
-  const [tasks, setTasks] = useState(mockTasks);
+  const [tasks, setTasks] = useState([]);
   const [activeId, setActiveId] = useState(null);
+  const [pendingReschedule, setPendingReschedule] = useState(null);
+  const [rescheduleReason, setRescheduleReason] = useState('');
+  const [isRescheduling, setIsRescheduling] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
   }));
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getTasks()
+      .then((taskData) => {
+        if (!cancelled) setTasks(taskData);
+      })
+      .catch(() => {
+        if (!cancelled) setTasks([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onDragStart = (event) => {
     setActiveId(event.active.id);
@@ -40,33 +59,92 @@ export default function TimelineView() {
     // Extract day and time from over.id (format: "day|time")
     const [newDay, newTime] = over.id.split('|');
     
-    setTasks(prev => prev.map(task => {
-      if (task.id === active.id) {
-        // Calculate duration to maintain it
-        const [sh, sm] = task.startTime.split(':').map(Number);
-        const [eh, em] = task.endTime.split(':').map(Number);
-        const durationMins = (eh * 60 + em) - (sh * 60 + sm);
+    const activeTask = tasks.find(task => task.id === active.id);
+    if (!activeTask) return;
 
-        const [nh, nm] = newTime.split(':').map(Number);
-        const totalEndMins = (nh * 60 + nm) + durationMins;
-        const newEndH = Math.floor(totalEndMins / 60).toString().padStart(2, '0');
-        const newEndM = (totalEndMins % 60).toString().padStart(2, '0');
+    const [sh, sm] = activeTask.startTime.split(':').map(Number);
+    const [eh, em] = activeTask.endTime.split(':').map(Number);
+    const durationMins = (eh * 60 + em) - (sh * 60 + sm);
 
-        return {
-          ...task,
-          date: newDay,
-          startTime: newTime,
-          endTime: `${newEndH}:${newEndM}`
-        };
-      }
-      return task;
-    }));
+    const [nh, nm] = newTime.split(':').map(Number);
+    const totalEndMins = (nh * 60 + nm) + durationMins;
+    const newEndH = Math.floor(totalEndMins / 60).toString().padStart(2, '0');
+    const newEndM = (totalEndMins % 60).toString().padStart(2, '0');
+    setPendingReschedule({
+      taskId: active.id,
+      title: activeTask.title,
+      from: {
+        date: activeTask.date,
+        startTime: activeTask.startTime,
+        endTime: activeTask.endTime,
+      },
+      to: {
+        date: newDay,
+        startTime: newTime,
+        endTime: `${newEndH}:${newEndM}`,
+      },
+    });
+    setRescheduleReason('');
+  };
+
+  const cancelReschedule = () => {
+    setPendingReschedule(null);
+    setRescheduleReason('');
+  };
+
+  const confirmReschedule = async (event) => {
+    event.preventDefault();
+    if (!pendingReschedule || !rescheduleReason.trim() || isRescheduling) return;
+
+    setIsRescheduling(true);
+    try {
+      const updatedTask = await rescheduleTask(pendingReschedule.taskId, {
+        ...pendingReschedule.to,
+        reason: rescheduleReason,
+      });
+      setTasks(prev => prev.map(task => (
+        task.id === updatedTask.id ? updatedTask : task
+      )));
+      cancelReschedule();
+    } finally {
+      setIsRescheduling(false);
+    }
   };
 
   const activeTask = activeId ? tasks.find(t => t.id === activeId) : null;
 
   return (
     <div className="timeline-container multi-day">
+      {pendingReschedule && (
+        <div className="hud-modal-overlay" onClick={cancelReschedule}>
+          <form className="hud-modal-content task-create-modal" onSubmit={confirmReschedule} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="hud-label">RESCHEDULE_REASON_REQUIRED</span>
+              <button type="button" className="hud-icon-button" onClick={cancelReschedule}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="reschedule-summary">
+              <strong>{pendingReschedule.title}</strong>
+              <span>{pendingReschedule.from.date} {pendingReschedule.from.startTime}-{pendingReschedule.from.endTime}</span>
+              <span>TO</span>
+              <span>{pendingReschedule.to.date} {pendingReschedule.to.startTime}-{pendingReschedule.to.endTime}</span>
+            </div>
+            <label className="upload-field">
+              <span className="hud-label">WHY_IS_THIS_MOVING?</span>
+              <textarea
+                value={rescheduleReason}
+                onChange={(event) => setRescheduleReason(event.target.value)}
+                placeholder="Type the reason before this reschedule is committed."
+                autoFocus
+              />
+            </label>
+            <button type="submit" className="hud-button" disabled={!rescheduleReason.trim() || isRescheduling}>
+              {isRescheduling ? 'RECORDING...' : 'CONFIRM_RESCHEDULE'}
+            </button>
+          </form>
+        </div>
+      )}
       <div className="timeline-header">
         <div className="hud-label">TEMPORAL_GRID_MULTI_SEGMENT</div>
       </div>

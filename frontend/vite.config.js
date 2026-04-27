@@ -10,7 +10,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
         ws: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+      '/media': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
       },
     },
   },

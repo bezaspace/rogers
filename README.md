@@ -56,8 +56,28 @@ clara/
 Start the backend (port 8000):
 ```bash
 cd backend
-uv run uvicorn clara_agent.main:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn clara_agent.main:app --host 127.0.0.1 --port 8080 --reload
 ```
+
+Seed the SQLite database whenever you want to reset the notes, media, and task data:
+```bash
+cd backend
+uv run python seed.py
+```
+
+Uploaded gallery images are stored outside the repository by default:
+```text
+/home/harsha/Rogers-Images
+```
+
+Set `ROGERS_IMAGES_DIR` before starting the backend if you want to use a different image folder.
+
+Unprocessed Image Dump files are stored outside the repository by default:
+```text
+/home/harsha/Rogers-Image-Dump
+```
+
+Set `ROGERS_IMAGE_DUMP_DIR` before starting the backend if you want to use a different dump folder.
 
 Start the frontend (port 5173):
 ```bash
