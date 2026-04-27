@@ -26,6 +26,78 @@ export function getProjects() {
   return request('/projects')
 }
 
+export function sendTextAssistantMessage(message, sessionId) {
+  return request('/text-assistant', {
+    method: 'POST',
+    body: JSON.stringify({
+      message,
+      session_id: sessionId || null,
+      mode: null,
+    }),
+  })
+}
+
+export function getTextAssistantModes() {
+  return request('/text-assistant/modes')
+}
+
+export async function streamTextAssistantMessage(message, sessionId, mode, handlers = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/text-assistant/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message,
+      session_id: sessionId || null,
+      mode,
+    }),
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`API request failed: ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const dispatchEvent = (rawEvent) => {
+    const lines = rawEvent.split('\n')
+    const eventLine = lines.find(line => line.startsWith('event: '))
+    const dataLines = lines
+      .filter(line => line.startsWith('data: '))
+      .map(line => line.slice(6))
+
+    if (!eventLine || dataLines.length === 0) {
+      return
+    }
+
+    const eventType = eventLine.slice(7)
+    const payload = JSON.parse(dataLines.join('\n'))
+
+    if (eventType === 'session') handlers.onSession?.(payload.sessionId, payload.mode)
+    if (eventType === 'thinking_delta') handlers.onThinkingDelta?.(payload.text || '')
+    if (eventType === 'answer_delta') handlers.onAnswerDelta?.(payload.text || '')
+    if (eventType === 'done') handlers.onDone?.(payload)
+    if (eventType === 'error') handlers.onError?.(payload.message || 'Streaming failed.')
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split('\n\n')
+    buffer = events.pop() || ''
+    events.forEach(dispatchEvent)
+  }
+
+  if (buffer.trim()) {
+    dispatchEvent(buffer)
+  }
+}
+
 export function createProject(name, details) {
   return request('/projects', {
     method: 'POST',

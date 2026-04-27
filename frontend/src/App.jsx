@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import VoiceAssistant from './components/VoiceAssistant'
+import TextAssistant from './components/TextAssistant'
 import ObsidianClone from './components/ObsidianClone'
 import TaskManagement from './components/TaskManagement'
 import TimelineView from './components/TimelineView'
@@ -7,6 +8,7 @@ import { Mic, Book, ListTodo, Clock } from 'lucide-react'
 
 function App() {
   const [activeTab, setActiveTab] = useState('voice') // 'voice', 'notes', 'tasks', or 'timeline'
+  const [assistantMode, setAssistantMode] = useState('voice')
 
   return (
     <div className="app-shell">
@@ -50,7 +52,28 @@ function App() {
       </nav>
 
       <main className="content-area">
-        {activeTab === 'voice' ? <VoiceAssistant /> : 
+        {activeTab === 'voice' ? (
+          <div className="assistant-tab-shell">
+            <div className="assistant-mode-bar">
+              <span className="hud-label">ASSISTANT_MODE</span>
+              <button
+                type="button"
+                className={`assistant-toggle-button ${assistantMode === 'text' ? 'text-active' : 'voice-active'}`}
+                onClick={() => setAssistantMode(assistantMode === 'voice' ? 'text' : 'voice')}
+              >
+                <span className="assistant-toggle-current">
+                  {assistantMode === 'voice' ? 'VOICE_ASSISTANT' : 'TEXT_ASSISTANT'}
+                </span>
+                <span className="assistant-toggle-action">
+                  {assistantMode === 'voice' ? 'SWITCH_TO_TEXT' : 'SWITCH_TO_VOICE'}
+                </span>
+              </button>
+            </div>
+            <div className="assistant-view">
+              {assistantMode === 'voice' ? <VoiceAssistant /> : <TextAssistant />}
+            </div>
+          </div>
+        ) : 
          activeTab === 'notes' ? <ObsidianClone /> : 
          activeTab === 'tasks' ? <TaskManagement /> : 
          <TimelineView />}

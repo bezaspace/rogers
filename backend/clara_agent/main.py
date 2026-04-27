@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,12 +9,15 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.agents import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig
+from google.adk.agents.run_config import StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.sessions import Session
@@ -33,11 +38,20 @@ from clara_agent.agent import clara_agent
 # Load environment variables
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
+if os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GEMINI_API_KEY"):
+    os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+
+from clara_agent.text_agent import DEFAULT_TEXT_MODEL_MODE
+from clara_agent.text_agent import create_text_assistant_agent
+from clara_agent.text_agent import get_text_assistant_modes
 
 APP_NAME = "clara"
+TEXT_APP_NAME = "clara_text_assistant"
 USER_ID = "anonymous"
 session_service = InMemorySessionService()
+text_session_services: dict[str, InMemorySessionService] = {}
 runner: Runner | None = None
+text_runners: dict[str, Runner] = {}
 session_resumption_handles: dict[str, str] = {}
 
 
@@ -70,6 +84,12 @@ class StopSessionMessage(BaseModel):
     type: Literal["stop_session"]
 
 
+class TextAssistantRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    mode: str | None = None
+
+
 ClientMessage = (
     SessionInitMessage
     | ActivityStartMessage
@@ -83,13 +103,26 @@ ClientMessage = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global runner
+    global runner, text_runners, text_session_services
     initialize_database()
     runner = Runner(
         agent=clara_agent,
         app_name=APP_NAME,
         session_service=session_service,
     )
+    text_runners = {}
+    text_session_services = {}
+    for mode in get_text_assistant_modes():
+        if not mode["enabled"]:
+            continue
+        mode_id = mode["id"]
+        mode_session_service = InMemorySessionService()
+        text_session_services[mode_id] = mode_session_service
+        text_runners[mode_id] = Runner(
+            agent=create_text_assistant_agent(mode_id),
+            app_name=_text_app_name(mode_id),
+            session_service=mode_session_service,
+        )
     yield
 
 
@@ -116,6 +149,248 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+def _split_thinking_from_text(text: str) -> tuple[str, str]:
+    thinking_parts = []
+
+    def collect_thinking(match: re.Match[str]) -> str:
+        thinking_parts.append(match.group(1).strip())
+        return ""
+
+    final_text = re.sub(
+        r"<\|channel\>thought\s*(.*?)<channel\|>",
+        collect_thinking,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    final_text = re.sub(
+        r"<think(?:ing)?>(.*?)</think(?:ing)?>",
+        collect_thinking,
+        final_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return final_text.strip(), "\n\n".join(part for part in thinking_parts if part)
+
+
+def _split_streaming_thought_buffer(
+    buffer: str,
+    flush: bool = False,
+) -> tuple[list[tuple[str, str]], str]:
+    events: list[tuple[str, str]] = []
+    start_tokens = ("<think>", "<thinking>", "<|channel>thought")
+
+    while buffer:
+        lower_buffer = buffer.lower()
+        starts = [
+            index
+            for token in start_tokens
+            if (index := lower_buffer.find(token)) >= 0
+        ]
+        if not starts:
+            if flush:
+                if buffer:
+                    events.append(("answer_delta", buffer))
+                return events, ""
+
+            keep = min(64, len(buffer))
+            emit_length = len(buffer) - keep
+            if emit_length > 0:
+                events.append(("answer_delta", buffer[:emit_length]))
+                buffer = buffer[emit_length:]
+            return events, buffer
+
+        start = min(starts)
+        if start > 0:
+            events.append(("answer_delta", buffer[:start]))
+            buffer = buffer[start:]
+            lower_buffer = buffer.lower()
+
+        if lower_buffer.startswith("<|channel>thought"):
+            open_end = buffer.find("\n")
+            if open_end < 0:
+                return events, buffer
+            close_start = lower_buffer.find("<channel|>", open_end)
+            if close_start < 0:
+                return events, buffer
+            thought = buffer[open_end + 1 : close_start].strip()
+            if thought:
+                events.append(("thinking_delta", thought))
+            buffer = buffer[close_start + len("<channel|>") :]
+            continue
+
+        if lower_buffer.startswith("<thinking>"):
+            close_token = "</thinking>"
+            open_length = len("<thinking>")
+        else:
+            close_token = "</think>"
+            open_length = len("<think>")
+
+        close_start = lower_buffer.find(close_token, open_length)
+        if close_start < 0:
+            return events, buffer
+
+        thought = buffer[open_length:close_start].strip()
+        if thought:
+            events.append(("thinking_delta", thought))
+        buffer = buffer[close_start + len(close_token) :]
+
+    return events, buffer
+
+
+def _sse_event(event_type: str, payload: dict[str, object]) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _text_app_name(mode: str) -> str:
+    return f"{TEXT_APP_NAME}_{mode}"
+
+
+def _normalize_text_mode(mode: str | None) -> str:
+    return mode or DEFAULT_TEXT_MODEL_MODE
+
+
+def _text_mode_error(mode: str) -> str:
+    for candidate in get_text_assistant_modes():
+        if candidate["id"] == mode:
+            return candidate["reason"] or "Mode is not initialized. Restart the backend."
+    return f"Unsupported text assistant mode: {mode}"
+
+
+def _text_runner_for_mode(mode: str) -> Runner:
+    text_runner = text_runners.get(mode)
+    if text_runner is None:
+        raise HTTPException(status_code=400, detail=_text_mode_error(mode))
+    return text_runner
+
+
+@app.get("/api/text-assistant/modes")
+async def get_text_modes() -> dict[str, object]:
+    modes = []
+    for mode in get_text_assistant_modes():
+        mode_id = mode["id"]
+        modes.append(
+            {
+                **mode,
+                "enabled": bool(mode["enabled"] and mode_id in text_runners),
+                "reason": mode["reason"]
+                or ("" if mode_id in text_runners else "Mode is not initialized. Restart the backend."),
+            }
+        )
+
+    return {
+        "defaultMode": DEFAULT_TEXT_MODEL_MODE,
+        "modes": modes,
+    }
+
+
+@app.post("/api/text-assistant")
+async def post_text_assistant(payload: TextAssistantRequest) -> dict[str, str]:
+    mode = _normalize_text_mode(payload.mode)
+    text_runner = _text_runner_for_mode(mode)
+
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    session_id = payload.session_id or str(uuid.uuid4())
+    await _get_or_create_text_session(session_id, mode)
+
+    final_parts: list[str] = []
+    thinking_parts: list[str] = []
+    async for event in text_runner.run_async(
+        user_id=USER_ID,
+        session_id=session_id,
+        new_message=types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=message)],
+        ),
+    ):
+        if not event.is_final_response():
+            continue
+        if not event.content or not event.content.parts:
+            continue
+        for part in event.content.parts:
+            if part.text:
+                if getattr(part, "thought", False):
+                    thinking_parts.append(part.text)
+                else:
+                    final_parts.append(part.text)
+
+    answer, tagged_thinking = _split_thinking_from_text("\n".join(final_parts))
+    if tagged_thinking:
+        thinking_parts.append(tagged_thinking)
+
+    return {
+        "sessionId": session_id,
+        "mode": mode,
+        "answer": answer,
+        "thinking": "\n\n".join(part.strip() for part in thinking_parts if part.strip()),
+    }
+
+
+@app.post("/api/text-assistant/stream")
+async def stream_text_assistant(payload: TextAssistantRequest) -> StreamingResponse:
+    mode = _normalize_text_mode(payload.mode)
+    text_runner = _text_runner_for_mode(mode)
+
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    session_id = payload.session_id or str(uuid.uuid4())
+    await _get_or_create_text_session(session_id, mode)
+
+    async def stream_events():
+        yield _sse_event("session", {"sessionId": session_id, "mode": mode})
+        visible_text_buffer = ""
+
+        try:
+            async for event in text_runner.run_async(
+                user_id=USER_ID,
+                session_id=session_id,
+                new_message=types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=message)],
+                ),
+                run_config=RunConfig(streaming_mode=StreamingMode.SSE),
+            ):
+                if not event.content or not event.content.parts:
+                    continue
+
+                for part in event.content.parts:
+                    if not part.text:
+                        continue
+
+                    if getattr(part, "thought", False):
+                        yield _sse_event("thinking_delta", {"text": part.text})
+                        continue
+
+                    visible_text_buffer += part.text
+                    stream_parts, visible_text_buffer = _split_streaming_thought_buffer(
+                        visible_text_buffer
+                    )
+                    for event_type, text in stream_parts:
+                        yield _sse_event(event_type, {"text": text})
+
+            stream_parts, visible_text_buffer = _split_streaming_thought_buffer(
+                visible_text_buffer,
+                flush=True,
+            )
+            for event_type, text in stream_parts:
+                yield _sse_event(event_type, {"text": text})
+            yield _sse_event("done", {"sessionId": session_id})
+        except Exception as exc:
+            error_message = str(exc)
+            if mode == "llama31_hf" and ("402" in error_message or "Payment Required" in error_message):
+                error_message = "Hugging Face free inference credits appear to be exhausted for this account."
+            yield _sse_event("error", {"message": error_message, "mode": mode})
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _parse_client_message(raw_message: str) -> ClientMessage:
@@ -151,6 +426,26 @@ async def _get_or_create_session(session_id: str) -> Session:
 
     return await session_service.create_session(
         app_name=APP_NAME,
+        user_id=USER_ID,
+        session_id=session_id,
+    )
+
+
+async def _get_or_create_text_session(session_id: str, mode: str) -> Session:
+    text_session_service = text_session_services.get(mode)
+    if text_session_service is None:
+        raise HTTPException(status_code=400, detail=_text_mode_error(mode))
+
+    session = await text_session_service.get_session(
+        app_name=_text_app_name(mode),
+        user_id=USER_ID,
+        session_id=session_id,
+    )
+    if session:
+        return session
+
+    return await text_session_service.create_session(
+        app_name=_text_app_name(mode),
         user_id=USER_ID,
         session_id=session_id,
     )

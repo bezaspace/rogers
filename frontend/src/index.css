@@ -104,6 +104,56 @@ html, body, #root {
   position: relative;
 }
 
+/* Assistant Toggle Styles */
+.assistant-tab-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.assistant-mode-bar {
+  align-items: center;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  height: 40px;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.assistant-toggle-button {
+  align-items: center;
+  background: var(--accent-muted);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-mono);
+  gap: 12px;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+}
+
+.assistant-toggle-button:hover {
+  box-shadow: 0 0 14px rgba(212, 154, 61, 0.18);
+}
+
+.assistant-toggle-current {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.assistant-toggle-action {
+  border-left: 1px solid var(--accent);
+  font-size: 9px;
+  padding-left: 12px;
+}
+
+.assistant-view {
+  flex: 1;
+  min-height: 0;
+}
+
 /* Voice Assistant Styles */
 .voice-assistant-container {
   height: 100%;
@@ -223,6 +273,185 @@ html, body, #root {
 .secondary-control:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Text Assistant Styles */
+.text-assistant-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.text-mode-selector {
+  align-items: center;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  min-height: 40px;
+  overflow-x: auto;
+  padding: 6px clamp(16px, 4vw, 48px);
+}
+
+.text-mode-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  gap: 8px;
+  letter-spacing: 1px;
+  min-height: 26px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.text-mode-button.active {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.text-mode-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.text-mode-button small {
+  color: var(--danger);
+  font-size: 8px;
+  letter-spacing: 0;
+}
+
+.text-assistant-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px clamp(16px, 4vw, 48px);
+}
+
+.text-message {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 22px;
+  max-width: min(980px, 100%);
+  padding-left: 12px;
+}
+
+.text-message-role {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
+.text-message.user {
+  border-left: 2px solid var(--accent);
+}
+
+.text-message.assistant {
+  border-left: 2px solid var(--border);
+}
+
+.text-message.user .text-message-role,
+.text-message.user .text-message-body {
+  color: var(--accent);
+}
+
+.text-message-body {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 0;
+}
+
+.text-message.pending .text-message-body {
+  color: var(--muted);
+}
+
+.text-message-body p,
+.text-message-body ul,
+.text-message-body ol {
+  margin-bottom: 10px;
+}
+
+.text-message-body p:last-child,
+.text-message-body ul:last-child,
+.text-message-body ol:last-child {
+  margin-bottom: 0;
+}
+
+.text-message-body ul,
+.text-message-body ol {
+  padding-left: 18px;
+}
+
+.text-assistant-input-bar {
+  align-items: stretch;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  padding: 12px clamp(16px, 4vw, 48px);
+}
+
+.text-assistant-input-bar textarea {
+  background: #000000;
+  border: 1px solid var(--border);
+  color: var(--text);
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 56px;
+  outline: none;
+  padding: 10px;
+  resize: none;
+}
+
+.text-assistant-input-bar textarea:focus {
+  border-color: var(--accent);
+}
+
+.text-assistant-input-bar .hud-button {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  min-width: 96px;
+}
+
+.thinking-accordion {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  margin-bottom: 4px;
+  max-width: min(760px, 100%);
+}
+
+.thinking-accordion summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 8px 10px;
+  text-transform: uppercase;
+}
+
+.thinking-accordion[open] summary {
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.thinking-content {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 12px;
 }
 
 /* Obsidian Clone Styles */

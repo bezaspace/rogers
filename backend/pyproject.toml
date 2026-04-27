@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "google-adk",
+    "google-adk[extensions]",
     "python-dotenv",
     "python-multipart",
     "pydantic",
